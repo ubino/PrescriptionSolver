@@ -1,0 +1,21 @@
+package eu.dedalus.prescriptionsolver;
+
+
+/* 
+ *   Counter Rules
+ */
+
+rule "Admission maxPieces"
+dialect "mvel"
+when
+    //sia $p una ricetta con $maxPieces 
+    $p : Prescription( itemType == 'R', $maxPieces : maxPieces)
+    //sia $totalPieces il mumero di tutti i ricoveri associati a $p. Se $totalPieces > $maxPieces allora violo il vincolo
+    Number($totalPieces: intValue() > $maxPieces) from accumulate ($pa:PrescriptionAdmission(prescription == $p), count( $pa ) )
+   
+then
+
+    if(LOGGER != null && LOGGER.isInfoEnabled())
+        LOGGER.debug("Admission MaxPieces Violation {}", $totalPieces);
+    scoreHolder.addHardConstraintMatch(kcontext, -($totalPieces - $maxPieces));
+end

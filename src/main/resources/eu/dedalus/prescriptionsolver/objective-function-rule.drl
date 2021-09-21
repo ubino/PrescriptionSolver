@@ -1,0 +1,183 @@
+package eu.dedalus.prescriptionsolver;
+
+import java.lang.Number;
+import java.util.List;
+import java.util.Set;
+import org.slf4j.Logger;
+//list any import classes here.
+import java.util.Collections;
+
+import eu.dedalus.prescriptionmodel.ProcedureInteraction;
+import function eu.dedalus.prescriptionmodel.LoggerUtility.initLog;
+import eu.dedalus.prescriptionmodel.Drug;
+import eu.dedalus.prescriptionmodel.Exemption;
+import eu.dedalus.prescriptionsolver.Prescription;
+import eu.dedalus.prescriptionsolver.PrescriptionDrug;
+import eu.dedalus.prescriptionsolver.PrescriptionProcedure;
+import eu.dedalus.prescriptionsolver.PrescriptionAdmission;
+
+global Logger LOGGER;
+
+rule "init"
+dialect "java"
+salience 100
+no-loop true
+when
+    //Without LHS: this rule is fired only once time
+then
+    //Init logger in stance from static function
+    drools.getWorkingMemory().setGlobal("LOGGER", initLog());
+    if(LOGGER != null && LOGGER.isInfoEnabled())
+        LOGGER.info("Init solver logger ");
+end
+
+// ############################################################################
+// Hard constraints
+// ############################################################################
+
+//minimal rule each Element must be assigned to a prescription
+rule "Minimal"
+dialect "mvel"
+    when
+        PrescriptionEntity (prescription == null)
+    then
+        if(LOGGER != null && LOGGER.isInfoEnabled())
+            LOGGER.info("Element has no prescription ");
+        //sto violando il vincolo
+        scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+//no prescription with Drug and Procedure
+rule "No Drug and Procedure togheter"
+dialect "mvel"
+enabled false
+    when
+        $d: PrescriptionDrug (prescription != null, $dId: prescription.id)
+        $p: PrescriptionProcedure (prescription != null && prescription.id == $dId )
+    then
+        if(LOGGER != null && LOGGER.isInfoEnabled())
+             LOGGER.info("Drugs and Procedures could not be assigned to same prescription ");
+        //sto violando il vincolo
+        scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+
+//no prescription with Drug and Admission
+rule "No Drug and Admission togheter"
+dialect "mvel"
+enabled false
+    when
+        $d: PrescriptionDrug (prescription != null, $dId: prescription.id)
+        $p: PrescriptionAdmission (prescription != null && prescription.id == $dId )
+    then
+        if(LOGGER != null && LOGGER.isInfoEnabled())
+             LOGGER.info("Drugs and Admission could not be assigned to same prescription ");
+        //sto violando il vincolo
+        scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+
+//no prescription with Procedure and Admission
+rule "No Procedure and Admission togheter"
+dialect "mvel"
+enabled false
+    when
+        $d: PrescriptionAdmission (prescription != null, $dId: prescription.id)
+        $p: PrescriptionProcedure (prescription != null && prescription.id == $dId )
+    then
+        if(LOGGER != null && LOGGER.isInfoEnabled())
+             LOGGER.info("Procedure and Admission could not be assigned to same prescription ");
+        //sto violando il vincolo
+        scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+//no  Drug to Prescription with itemType="A"
+rule "No Drug on A and R Prescription"
+    when
+        $d : PrescriptionDrug(prescription != null && ( prescription.itemType == 'A' || prescription.itemType == 'R'))
+
+    then
+        if(LOGGER != null && LOGGER.isInfoEnabled())
+             LOGGER.info("no  Drug to Prescription with itemType=A ");
+        //sto violando il vincolo
+        scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+//no  Procedure to Prescription with itemType="F"
+rule "No Procedure on F and R  Prescription"
+    when
+        $d : PrescriptionProcedure(prescription != null && (prescription.itemType == 'F' || prescription.itemType == 'R'))
+    then
+        if(LOGGER != null && LOGGER.isInfoEnabled())
+             LOGGER.info("no  Procedure to Prescription with itemType=F ");
+        //sto violando il vincolo
+        scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+
+//no  Admission to Prescription with itemType="F" or "A"
+rule "No Admission on F and A Prescription"
+    when
+        $d : PrescriptionAdmission(prescription != null && (prescription.itemType == 'F' || prescription.itemType == 'A'))
+    then
+        if(LOGGER != null && LOGGER.isInfoEnabled())
+             LOGGER.info("no Admission to Prescription with itemType=F or A  ");
+        //sto violando il vincolo
+        scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+// ############################################################################
+// Medium constraints
+// ############################################################################
+
+//Objective Function: minimize the number of prescription
+rule "OF-minimize"
+dialect "mvel"
+salience -1 
+    when
+        $prescription : Prescription()
+        exists (PrescriptionEntity(prescription == $prescription))
+    then
+    // minimize the cost
+    scoreHolder.addMediumConstraintMatch(kcontext, -1);
+end
+
+// ############################################################################
+// Soft constraints
+// ############################################################################
+
+rule "OF-Drug same drug into the same prescription"
+dialect "mvel"
+salience -1
+when
+    $p : Prescription( itemType == 'F', $id : id)
+     //sia $allMinsan il set distinto di tutti i minsan associati a $p
+    $allMinsan : Set( size > 0 ) from accumulate (
+            PrescriptionDrug(prescription == $p, $minsan: drug.minsan );
+            collectSet($minsan)
+    )
+then
+    int cost = $allMinsan.size();
+    // maximize the cost
+
+    LOGGER.debug("{}) Drugs soft score {}", $id, cost);
+    scoreHolder.addSoftConstraintMatch(kcontext, - cost);
+end
+
+rule "OF-Procedure maximize cost"
+dialect "mvel"
+salience -1
+
+when
+    $p : Prescription( itemType == 'A', $id : id)
+    $totalPrize : Number( $totalPrize != 0) from accumulate (
+            PrescriptionProcedure( prescription == $p , $price: procedure.price );
+            sum($price)
+    )
+then
+    LOGGER.debug("{}) Procedure totalPrize {}",$id,  $totalPrize);
+    int cost = (int)($totalPrize - 36);
+	// maximize the cost   
+    LOGGER.debug("{}) Procedure soft score cost {}", $id, cost);
+    scoreHolder.addSoftConstraintMatch(kcontext, cost);
+end

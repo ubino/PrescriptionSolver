@@ -1,0 +1,110 @@
+package eu.dedalus.prescriptionsolver;
+
+rule "Demat Prescription"
+dialect "mvel"
+when
+    //sia $p una ricetta dematerializzata
+    $p : Prescription( outType == 'D')
+    //sia $pp una prestazione o una terapia associata a $p che ha il flag demat a false
+    $pp : PrescriptionEntity(prescription == $p, (granted == false || demat == false))
+then
+    if(LOGGER != null && LOGGER.isInfoEnabled())
+        LOGGER.info("Demat Presription Violation {} entity {}", $p.id, $pp.id);
+    //sto violando il vincolo
+    scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+
+rule "White Prescription"
+dialect "mvel"
+when
+    //sia $p una ricetta bianca
+    $p : Prescription( outType == 'B')
+    //sia $d un farmaco o un accertamento associato a $p che :
+    //- ha il flag demat a true oppure
+    //
+    $d : PrescriptionEntity(prescription == $p, granted == true  )
+then
+    if(LOGGER != null && LOGGER.isInfoEnabled())
+        LOGGER.info("White Presription Violation ");
+    //sto violando il vincolo
+    scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+
+rule "Granted Prescription"
+enabled false
+dialect "mvel"
+when
+    //sia $p una ricetta NON BIANCA
+    $p : Prescription(  outType != 'B')
+    //sia $d un farmaco o un accertamento associato a $p che ha il flag granted a false
+    $d : PrescriptionEntity(prescription == $p, granted == false)
+then
+    if(LOGGER != null && LOGGER.isInfoEnabled())
+        LOGGER.info("Granted Presription Violation ");
+    //sto violando il vincolo
+    scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+rule "NOT-Granted Prescription"
+enabled false
+dialect "mvel"
+when
+    //sia $p una ricetta BIANCA
+    $p : Prescription( outType == 'B')
+    //sia $d un farmaco o un accertamento associato a $p che ha il flag granted a true
+    $d : PrescriptionEntity(prescription == $p, granted == true)
+then
+    if(LOGGER != null && LOGGER.isInfoEnabled())
+        LOGGER.info("NOT Granted Presription Violation ");
+    //sto violando il vincolo
+    scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+rule "Red Prescription"
+dialect "mvel"
+when
+    //sia $p una ricetta bianca
+    $p : Prescription( outType == 'R')
+    //sia $d un farmaco o un accertamento  associato a $p che ha il flag demat a true
+    $d : PrescriptionEntity(prescription == $p, (granted == false || demat == true ))
+then
+    if(LOGGER != null && LOGGER.isInfoEnabled())
+        LOGGER.info("Red Presription Violation ");
+    //sto violando il vincolo
+    scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+
+/* 
+ *   Exemption Rules
+ */
+rule "Valid Exemption Association"
+dialect "mvel"
+when
+    //sia $p una ricetta con associata un'esenzione valida (non nulla)
+    $p : Prescription($pe : exemption, (exemption != null && exemption.type != "N"))
+    //sia $d un farmaco o un accertamento associato a $p ma senza esenzione o con un'esenzione diversa
+    $d : PrescriptionEntity(prescription == $p, exemption == null  || exemption.type != $pe.type || exemption.code != $pe.code)
+then
+    if(LOGGER != null && LOGGER.isInfoEnabled())
+        LOGGER.info("Valid Exemption Violation on prescription{} and entity{}",$p.id, $d.id);
+    //sto violando il vincolo
+    scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+
+rule "No-Exemption Association"
+dialect "mvel"
+when
+    //sia $p una ricetta senza un'esenzione valida
+    $p : Prescription( exemption == null || exemption.type == 'N')
+    //sia $d un farmaco o un accertamento associato a $p ma con associata un'esenzione di tipo differente da N
+    $d : PrescriptionEntity(prescription == $p, exemption != null && exemption.type != 'N')
+then
+    if(LOGGER != null && LOGGER.isInfoEnabled())
+        LOGGER.info("NO Exemption Violation ");
+    //sto violando il vincolo
+    scoreHolder.addHardConstraintMatch(kcontext, -1);
+end

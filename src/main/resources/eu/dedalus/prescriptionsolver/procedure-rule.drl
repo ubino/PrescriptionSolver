@@ -1,0 +1,180 @@
+package eu.dedalus.prescriptionsolver;
+
+import java.util.List;
+import java.lang.String;
+import java.util.ArrayList;
+import org.apache.commons.lang3.StringUtils;
+
+import eu.dedalus.prescriptionmodel.Procedure;
+import eu.dedalus.prescriptionmodel.LoggerUtility;
+
+
+function boolean differentBranches(Procedure p1, Procedure p2) {
+    String branch1 = p1.getBranch();
+	String branch2 = p2.getBranch();
+	
+	if(StringUtils.isNoneBlank(branch1, branch2)  ) {
+		//compare selected branch
+		return !branch1.equals(branch2);
+	}
+
+	List<String>branches1 = p1.getBranches();
+	List<String>branches2 = p2.getBranches();
+
+	if(StringUtils.isNoneBlank(branch1)) {
+		//compare selected branch1 with list of branches2
+		return !branches2.contains(branch1);
+	}
+
+	if(StringUtils.isNoneBlank(branch2)) {
+		//compare selected branch2 with list of branches1
+		return !branches1.contains(branch2);
+	}
+	
+	// compare list of branches1 with list of branches2
+	return !existIntersection(p1, p2);
+}
+
+function boolean existIntersection(Procedure p1, Procedure p2) {
+    List<String>lst1 = p1.getBranches();
+    List<String>lst2 = p2.getBranches();
+	if(lst1 == null || lst1.size() == 0 || lst2 == null || lst2.size() == 0)
+	    return false;
+	    
+	for (String str : lst1) {
+		if(lst2.contains(str)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function boolean needToInclude(Procedure p, String otherCatalogueCode){
+	for(ProcedureInteraction pi : p.getNeedToInclude()) {
+		if(otherCatalogueCode.equals(pi.getCode())){
+			return true;
+		}
+	}
+	return false;
+}
+
+rule "Procedure Same branches"
+dialect "mvel"
+when
+    //sia $p1 una prestazione associata a prescription
+    $p1 : PrescriptionProcedure(prescription != null)
+    //sia $p2 una prestazione associata alla stessa ricetta di p1 (con procedura diversa)
+    $p2 : PrescriptionProcedure(prescription != null && prescription == $p1.prescription && procedure.id != $p1.procedure.id)
+    
+    // se p1 e p2 non hanno branche in comune allora sto violando il vincolo
+    eval(differentBranches($p1.procedure, $p2.procedure))
+then
+    LOGGER.debug("Procedure with different branch into the same Prescription ");
+    //sto violando il vincolo
+    scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+rule "Procedure Same Priority"
+dialect "mvel"
+when
+    //sia $p1 una prestazione associata a prescription con livello di urgenza specificato
+    $p1 : PrescriptionProcedure(prescription != null 
+            && procedure.urgency != null && !procedure.urgency.trim().isEmpty(), $urgency: procedure.urgency)
+     //sia $p2 una prestazione associata alla stessa prescrizione di p1 con livello di urgenza specificato ma diverso da $urgency      
+    $p2 : PrescriptionProcedure(prescription != null && prescription == $p1.prescription && procedure.id != $p1.procedure.id
+            && procedure.urgency != null && !procedure.urgency.trim().isEmpty() && !procedure.urgency.equals($urgency) )
+then
+     LOGGER.debug("Procedure with different urgency level into the same Prescription p1 {} p2 {}",$p1.getProcedure().getDescription(),$p2.getProcedure().getDescription());
+    //sto violando il vincolo
+    scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+/* 
+ *   Counter Rules
+ */
+
+rule "Procedure maxPieces"
+dialect "mvel"
+when
+    //sia $p una ricetta con $maxPieces 
+    $p : Prescription( itemType == 'A', $maxPieces : maxPieces)
+    //sia $totalPieces il mumero di tutti gli accertamenti associati a $p. Se $totalPieces > $maxPieces allora violo il vincolo
+    Number($totalPieces: intValue() > $maxPieces) from accumulate ($pr:PrescriptionProcedure(prescription == $p), count( $pr ) )
+   
+then
+    LOGGER.debug("MaxPieces Violation {}", $totalPieces);
+    scoreHolder.addHardConstraintMatch(kcontext, -($totalPieces - $maxPieces));
+end
+
+/*
+ * Need to exclude Rule 
+ */
+rule "Procedure Exclude"
+dialect "mvel"
+when
+    // sia p una ricetta di tipo accertamento
+    $p : Prescription( itemType == 'A')
+    // sia pr un accertamento di p con lista needToExclude non vuota
+    $pr: PrescriptionProcedure(prescription == $p && procedure.needToExclude!= null && procedure.needToExclude.size() > 0, $needToExclude: procedure.needToExclude )
+    // conto quante PrescriptionProcedure contenute in needToExclude sono associate alla stessa ricetta
+    $cnt: Number($cnt > 0) from accumulate (
+         $itemn: ProcedureInteraction() from $needToExclude and PrescriptionProcedure(prescription == $p && procedure.catalogueCode == $itemn.code);
+         count($itemn)
+        )
+then
+    LOGGER.debug("Procedure Exclude Violation for procedure {} with cost -{}", $pr.getProcedure().getDescription(), $cnt.intValue());
+    scoreHolder.addHardConstraintMatch(kcontext, -1*$cnt.intValue());
+end
+
+rule "Procedure Include (NOT OTHER)"
+dialect "mvel"
+when
+	// sia p una ricetta di tipo accertamento
+    $p : Prescription( itemType == 'A')
+    
+    // sia pr un accertamento di p con lista needToinclude non vuota
+    $pr: PrescriptionProcedure($pid : procedure.id, prescription == $p, procedure.needToInclude!= null && procedure.needToInclude.size() > 0 );
+	
+	// sia prOther un altro accertamento sulla stessa ricetta
+	$prOther : PrescriptionProcedure( procedure.id != $pid && prescription == $p);
+	
+	eval(!needToInclude($pr.procedure, $prOther.procedure.catalogueCode))
+then
+    //LOGGER.debug("Procedure {} EXCLUDE Violation with other procedure {}", $pr.getProcedure().getDescription(), $prOther.getProcedure().getDescription());
+    LOGGER.debug("Procedure {} EXCLUDE Violation with other procedure {} ", $pr.getProcedure().getDescription()+ " - "+$pr.getPrescription().getId(), $prOther.getProcedure().getDescription()+ " - "+$prOther.getPrescription().getId());
+   
+    scoreHolder.addHardConstraintMatch(kcontext, -1 );
+end
+
+rule "Procedure Include (FORCE LIST)"
+dialect "mvel"
+when   
+    // sia pr un accertamento di p con lista needToinclude non vuota
+    $pr: PrescriptionProcedure($pid : procedure.id, prescription!= null && procedure.needToInclude!= null && procedure.needToInclude.size() > 0 );
+	
+	// sia prOther un altro accertamento sulla stessa ricetta
+	$prOther : PrescriptionProcedure( prescription!= null && prescription != $pr.prescription );
+	
+	eval(needToInclude($pr.procedure, $prOther.procedure.catalogueCode))
+then
+    LOGGER.debug("Procedure {} INCLUDE Violation with other procedure {} ", $pr.getProcedure().getDescription()+ " - "+$pr.getPrescription().getId(), $prOther.getProcedure().getDescription()+ " - "+$prOther.getPrescription().getId());
+   
+    scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+rule "Procedure isOnlyInPrescription Rule"
+dialect "mvel"
+when
+     // sia pr un accertamento di con isOnlyInPrescription false
+    $pp: PrescriptionProcedure($pid : procedure.id, prescription!= null && prescription.itemType == 'A' && procedure.procedureFlags["PROCDEURE_ONLY_PRESCRIPTION"] == null || procedure.procedureFlags["PROCDEURE_ONLY_PRESCRIPTION"] == false  );
+	
+	// sia prOther un altro accertamento sulla stessa ricetta
+    //	$prOther : PrescriptionProcedure( procedure.id != $pid && prescription == $pr.prescription );
+  
+    //sia $totalPieces il mumero di tutti gli accertamenti associati a $p. Se $totalPieces > 1 allora violo il vincolo
+    Number($totalPieces: intValue() > 1) from accumulate ($pr:PrescriptionProcedure(prescription == $pp.prescription), count( $pr ) )
+then
+    LOGGER.debug("isOnlyInPrescription Violation {}", $totalPieces);
+    scoreHolder.addHardConstraintMatch(kcontext, -($totalPieces - 1));
+end
+
+

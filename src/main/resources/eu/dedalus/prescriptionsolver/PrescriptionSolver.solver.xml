@@ -1,0 +1,15 @@
+<solver xStreamId="1">
+  <scanAnnotatedClasses xStreamId="2"/>
+  <scoreDirectorFactory xStreamId="3"/>
+  <termination xStreamId="4">
+    <terminationCompositionStyle>AND</terminationCompositionStyle>
+    <scoreCalculationCountLimit>2000</scoreCalculationCountLimit>
+  </termination>
+  <constructionHeuristic xStreamId="5">
+    <constructionHeuristicType>ALLOCATE_ENTITY_FROM_QUEUE</constructionHeuristicType>
+    <entitySorterManner>DECREASING_DIFFICULTY_IF_AVAILABLE</entitySorterManner>
+  </constructionHeuristic>
+  <localSearch xStreamId="6">
+    <localSearchType>VARIABLE_NEIGHBORHOOD_DESCENT</localSearchType>
+  </localSearch>
+</solver>

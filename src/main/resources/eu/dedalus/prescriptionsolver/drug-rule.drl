@@ -1,0 +1,154 @@
+package eu.dedalus.prescriptionsolver;
+
+
+/* 
+ *   Counter Rules
+ */
+
+rule "Drug maxPieces"
+dialect "mvel"
+when
+    //sia $p una ricetta con $maxPieces 
+    $p : Prescription( itemType == 'F', $maxPieces : maxPieces)
+    //sia $totalPieces il mumero di tutti i farmaci associati a $p. Se $totalPieces > $maxPieces allora violo il vincolo
+    Number($totalPieces: intValue() > $maxPieces) from accumulate (PrescriptionDrug(prescription == $p, $quantity : drug.quantity), sum($quantity))
+   
+then
+    if(LOGGER != null && LOGGER.isInfoEnabled())
+        LOGGER.info("MaxPieces Violation ");
+    scoreHolder.addHardConstraintMatch(kcontext, -($totalPieces - $maxPieces));
+end
+
+
+rule "Drug maxRow"
+dialect "mvel"
+when
+    //sia $p una ricetta con $maxRow 
+    $p : Prescription( itemType == 'F', $maxRow : maxRow)
+
+    //sia $allMinsan il set distinto di tutti i minsan associati a $p
+    $allMinsan : Set( size > 0 ) from accumulate (
+            PrescriptionDrug(prescription == $p, $minsan: drug.minsan );
+            collectSet ($minsan)
+            )
+    //Se $allMinsan.size() > $maxRow allora violo il vincolo
+    eval($allMinsan.size() > $maxRow)
+then
+    if(LOGGER != null && LOGGER.isInfoEnabled())
+        LOGGER.info("MaxRow Violation ");    
+    scoreHolder.addHardConstraintMatch(kcontext, -($allMinsan.size() - $maxRow));
+end
+
+rule "DPC Drug "
+dialect "mvel"
+when
+    //sia $p una ricetta con $maxRow 
+    $p : Prescription( itemType == 'F')
+    //sia $totalDPC il mumero di tutti i farmaci associati a $p che sono anche DPC
+    $totalDPC: Number() from accumulate (PrescriptionDrug(prescription == $p, (drug.drugFlags["DPC"] != null && drug.drugFlags["DPC"] == true), $quantity : drug.quantity), sum($quantity))
+   
+    //sia $totalNoDPC il mumero di tutti i farmaci associati a $p che NON sono DPC
+    $totalNoDPC: Number() from accumulate (PrescriptionDrug(prescription == $p, (drug.drugFlags["DPC"] == null || drug.drugFlags["DPC"] == false), $quantity : drug.quantity), sum($quantity))
+    eval( $totalDPC > 0 && $totalNoDPC > 0)
+then
+    if(LOGGER != null && LOGGER.isInfoEnabled())
+        LOGGER.info("DPC mix Violation ");
+   int weight = -1 * Math.abs($totalNoDPC - $totalDPC);
+    scoreHolder.addHardConstraintMatch(kcontext, weight );
+end
+
+
+
+rule "Oxygen not associable"
+dialect "mvel"
+when
+    //sia $d1 un farmaco con principio attivo 279900 associato a prescription 
+    $d1 : PrescriptionDrug(prescription != null ,drug.activeIngredient != null && drug.activeIngredient.intValue() == 279900)
+    //sia $d2 un farmaco  associato alla stessa prescrizione di d1 con principio attivo != da 279900 o null     
+    $d2 : PrescriptionDrug(prescription != null && prescription == $d1.prescription && drug.id != $d1.drug.id && drug.activeIngredient != null
+          && drug.activeIngredient.intValue() != 279900 )
+then
+     LOGGER.debug("Oxygen not associable d1: {} d2: {}",$d1.getDrug().getDescription(),$d2.getDrug().getDescription());
+    //sto violando il vincolo
+    scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+
+
+rule "Multi Prescription"
+dialect "mvel"
+when
+    //sia $p una ricetta di farmaci 
+   // $p : Prescription( itemType == 'F', $pm : multiPrescription)
+    //farmaci multiprescrivibili vanno separati da farmaci non multiprescrivibili
+    //sia pd un farmaco con un flag multiprescrivibilità con valore diverso da quello della prescrizione
+    $pd : PrescriptionDrug(prescription != null  && prescription.multiPrescription && prescription.itemType == 'F' && 
+    (drug.drugFlags["multi_prescription"] == null || drug.drugFlags["multi_prescription"] == false))
+then
+    if(LOGGER != null && LOGGER.isInfoEnabled())
+        LOGGER.info("Multi Prescription Violation entity {}",  $pd.getDrug().getDescription());
+    //sto violando il vincolo
+    scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+
+
+rule "Multi Prescription 2"
+dialect "mvel"
+when
+    $pd : PrescriptionDrug(prescription != null && !prescription.multiPrescription && prescription.itemType == 'F' 
+    && drug.drugFlags["multi_prescription"] != null && drug.drugFlags["multi_prescription"] == true)
+then
+    if(LOGGER != null && LOGGER.isInfoEnabled())
+        LOGGER.info("Multi Prescription Violation 2 entity {}",  $pd.getDrug().getDescription());
+    //sto violando il vincolo
+    scoreHolder.addHardConstraintMatch(kcontext, -1);
+end
+
+
+
+//rule "Multi Prescription 3"
+//enabled false
+//dialect "mvel"
+//when
+    //sia $d1 un farmaco associato a prescription 
+ //   $d1 : PrescriptionDrug(prescription != null )
+    //sia $d2 un farmaco  associato alla stessa prescrizione di d1 con multiprescrizione diversa    
+  //  $d2 : PrescriptionDrug(prescription != null && prescription == $d1.prescription && drug.id != $d1.drug.id && drug.drugFlags["multi_prescription"] != $d1.drug.drugFlags["multi_prescription"] )
+//then
+ //  if(LOGGER != null && LOGGER.isInfoEnabled())
+  //   LOGGER.debug("Multi Prescription Violation 2 {} {}",$d1.getDrug().getDescription(),$d2.getDrug().getDescription());
+    //sto violando il vincolo
+    //scoreHolder.addHardConstraintMatch(kcontext, -1);
+//end
+
+
+rule "TDL Drugs"
+dialect "mvel"
+when
+    //sia $p una ricetta con $maxRow 
+    $p : Prescription( itemType == 'F')
+    //sia $totalTDL il mumero di tutti i farmaci associati a $pcon flag tdl valorizzato a true
+    $totalTDL: Number() from accumulate (PrescriptionDrug(prescription == $p, (checkFlags["TDL"] != null && checkFlags["TDL"] == true), $quantity : drug.quantity), sum($quantity))
+   
+    //sia $totalNoTDL il mumero di tutti i farmaci associati a $p con valore del flag tdl false o senza flag  
+    $totalNoTDL: Number() from accumulate (PrescriptionDrug(prescription == $p, (checkFlags["TDL"]  == null || checkFlags["TDL"]  == false), $quantity : drug.quantity), sum($quantity))
+    eval( $totalTDL > 0 && $totalNoTDL > 0)
+then
+    if(LOGGER != null && LOGGER.isInfoEnabled())
+        LOGGER.info("TDL Prescription Violation");
+    int weight = Math.abs($totalNoTDL - $totalTDL);
+    scoreHolder.addHardConstraintMatch(kcontext, -1 * (weight==0?1:weight) );
+end
+
+
+
+
+
+
+
+
+
+
+
+

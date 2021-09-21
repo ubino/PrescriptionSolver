@@ -1,0 +1,3 @@
+package eu.dedalus.prescriptionsolver;
+
+global org.optaplanner.core.api.score.buildin.hardmediumsoft.HardMediumSoftScoreHolder scoreHolder;
